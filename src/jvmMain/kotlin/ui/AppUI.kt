@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import view.MainViewModel
 import java.io.File
 import javax.crypto.Cipher
@@ -26,12 +27,13 @@ class AppUI(private val viewModel: MainViewModel) {
                 color = MaterialTheme.colors.background,
                 contentColor = MaterialTheme.colors.onBackground
             ) {
+                val scope = rememberCoroutineScope()
 
                 var expanded by remember { mutableStateOf(false) }
                 var selectedIndex by remember { mutableStateOf(0) }
                 fun checkError(selectedFilePath: String) =
                     (selectedFilePath.isNotBlank() && !File(selectedFilePath).exists()).also {
-                        viewModel.isError.value = it
+                        viewModel.isError = it
                     }
 
                 Column(
@@ -39,16 +41,33 @@ class AppUI(private val viewModel: MainViewModel) {
                     verticalArrangement = Arrangement.SpaceEvenly,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("LockBox - Dateiverschlüsselung und -entschlüsselung", style = MaterialTheme.typography.h5)
-
-                    CustomTextField(
-                        value = viewModel.selectedFilePath.value,
-                        onValueChange = { viewModel.selectedFilePath.value = it.trim() },
-                        label = "Dateipfad",
-                        isError = checkError(viewModel.selectedFilePath.value)
+                    Text(
+                        "LockBox - Mühelos sicher",
+                        style = MaterialTheme.typography.h5
                     )
 
-                    if (viewModel.isError.value) {
+                    CustomTextField(
+                        value = viewModel.selectedFilePath,
+                        isError = checkError(viewModel.selectedFilePath),
+                        onValueChange = {
+                            viewModel.selectedFilePath = it.trim()
+                        },
+                        label = "Dateipfad",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (viewModel.isError.not()) {
+                        scope.launch {
+                            if (viewModel.savingPath.isEmpty()) viewModel.savingPath =
+                                viewModel.selectedFilePath.trim().replaceAfterLast(
+                                    File.separator,
+                                    ""
+                                )
+                        }
+
+                    }
+
+                    if (viewModel.isError) {
                         Text(
                             "Datei existiert nicht!",
                             color = MaterialTheme.colors.error,
@@ -57,15 +76,16 @@ class AppUI(private val viewModel: MainViewModel) {
                         )
                     }
 
+
                     OutlinedButton(onClick = {
-                        val file = if (viewModel.selectedFilePath.value.isEmpty()) {
+
+                        val file = if (viewModel.selectedFilePath.isEmpty()) {
                             viewModel.selectFile()
                         } else {
-                            File(viewModel.selectedFilePath.value)
+                            File(viewModel.selectedFilePath)
                         }
-
                         if (file == null) return@OutlinedButton
-                        viewModel.selectedFilePath.value = file.absolutePath
+                        viewModel.selectedFilePath = file.absolutePath
 
                         if (!file.exists()) {
                             println("Datei existiert nicht!")
@@ -73,68 +93,72 @@ class AppUI(private val viewModel: MainViewModel) {
                         }
 
                         if (file.isDirectory) {
-                            viewModel.isSourceFileFolder.value = true
+                            viewModel.isSourceFileFolder = true
                             println("Ordner ausgewählt: ${file.absolutePath}")
                             return@OutlinedButton
                         }
 
                         println("Datei ausgewählt: ${file.absolutePath}")
-                    }, enabled = viewModel.isError.value.not()) {
+
+
+                    }, enabled = viewModel.isError.not()) {
                         Text("Datei auswählen")
                     }
 
                     CustomTextField(
-                        value = viewModel.savingPath.value,
-                        onValueChange = { viewModel.savingPath.value = it.trim() },
+                        value = viewModel.savingPath,
+                        onValueChange = { viewModel.savingPath = it.trim() },
                         label = "Speicherpfad",
                         isError = false
                     )
 
                     CustomTextField(
-                        value = viewModel.password.value,
-                        onValueChange = { viewModel.password.value = it },
+                        value = viewModel.password,
+                        onValueChange = { viewModel.password = it },
                         label = "Passwort",
                         isError = false
                     )
-
                     OutlinedButton(
                         onClick = {
 
-                            val cipher = Cipher.getInstance(viewModel.algorithm.value)
-                            val inputFile = File(viewModel.selectedFilePath.value)
+                            val cipher = Cipher.getInstance(viewModel.algorithm)
+                            val inputFile = File(viewModel.selectedFilePath)
 
 
-                            val outputFolder =
-                                if (viewModel.isSavingPathFolder.value) File(viewModel.savingPath.value) else File(
-                                    viewModel.savingPath.value + File.separator + inputFile.name
-                                )
+                            val outputFolder = File(viewModel.savingPath)
+
+                            println("Verschlüssle ${inputFile.absolutePath} nach ${outputFolder.absolutePath}")
 
                             viewModel.encrypt(
-                                viewModel.generateKeyFromPassword(viewModel.password.value),
+                                viewModel.generateKeyFromPassword(viewModel.password),
                                 cipher,
                                 inputFile,
                                 outputFolder
                             )
+
                         },
-                        enabled = viewModel.selectedFilePath.value.isNotBlank() && viewModel.password.value.isNotBlank() && viewModel.savingPath.value.isNotBlank()
+                        enabled = viewModel.selectedFilePath.isNotBlank() && viewModel.password.isNotBlank() && viewModel.savingPath.isNotBlank()
                     ) {
                         Text("Verschlüsseln")
                     }
 
                     OutlinedButton(
                         onClick = {
-                            val cipher = Cipher.getInstance(viewModel.algorithm.value)
-                            val inputFile = File(viewModel.selectedFilePath.value)
-                            val outputFile = File(viewModel.savingPath.value)
+                            val cipher = Cipher.getInstance(viewModel.algorithm)
+                            val inputFile = File(viewModel.selectedFilePath)
 
-                            viewModel.decrypt(
-                                viewModel.generateKeyFromPassword(viewModel.password.value),
-                                cipher,
-                                inputFile,
-                                outputFile
-                            )
+                            try {
+                                viewModel.decrypt(
+                                    viewModel.generateKeyFromPassword(viewModel.password),
+                                    cipher,
+                                    inputFile
+                                )
+                            } catch (e: Exception) {
+                                println("Fehler beim Entschlüsseln: ${e.message}")
+
+                            }
                         },
-                        enabled = viewModel.selectedFilePath.value.isNotBlank() && viewModel.password.value.isNotBlank() && viewModel.savingPath.value.isNotBlank()
+                        enabled = viewModel.selectedFilePath.isNotBlank() && viewModel.password.isNotBlank() && viewModel.savingPath.isNotBlank()
                     ) {
                         Text("Entschlüsseln")
                     }
@@ -148,7 +172,7 @@ class AppUI(private val viewModel: MainViewModel) {
                             onSelectedIndexChange = { selectedIndex = it },
                             expanded = expanded,
                             onExpandedChange = { expanded = it },
-                            onAlgorithmChange = { viewModel.algorithm.value = it }
+                            onAlgorithmChange = { viewModel.algorithm = it }
                         )
 
                         Row(
@@ -166,13 +190,19 @@ class AppUI(private val viewModel: MainViewModel) {
     }
 
     @Composable
-    fun CustomTextField(value: String, onValueChange: (String) -> Unit, label: String, isError: Boolean) {
+    fun CustomTextField(
+        value: String,
+        onValueChange: (String) -> Unit,
+        label: String,
+        isError: Boolean,
+        modifier: Modifier = Modifier.fillMaxWidth(),
+    ) {
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             label = { Text(label) },
-            modifier = Modifier.fillMaxWidth(),
-            isError = isError
+            modifier = modifier,
+            isError = isError,
         )
     }
 
@@ -183,7 +213,7 @@ class AppUI(private val viewModel: MainViewModel) {
         onSelectedIndexChange: (Int) -> Unit,
         expanded: Boolean,
         onExpandedChange: (Boolean) -> Unit,
-        onAlgorithmChange: (String) -> Unit
+        onAlgorithmChange: (String) -> Unit,
     ) {
         OutlinedButton(onClick = { onExpandedChange(true) }) {
             Text(items[selectedIndex])
